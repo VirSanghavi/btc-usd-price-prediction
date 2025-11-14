@@ -1,6 +1,5 @@
 import Link from "next/link";
 import PriceTicker from "@/components/PriceTicker";
-import ForecastButton from "@/components/ForecastButton";
 
 export default function Page() {
   return (
@@ -28,11 +27,7 @@ export default function Page() {
 
         <PriceTicker />
 
-        <div style={{ height: 16 }} />
-
-        <ForecastButton />
-
-        <p className="footer">Run the backend API on port 8000 and click Get Forecast.</p>
+        <p className="footer">Landing page with a live BTC/USD price ticker.</p>
       </div>
     </main>
   );
