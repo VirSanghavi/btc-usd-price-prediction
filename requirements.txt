@@ -8,3 +8,5 @@ torch>=2.2.0
 hmmlearn>=0.3.2
 arch>=6.3.0
 kagglehub>=0.2.5
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
