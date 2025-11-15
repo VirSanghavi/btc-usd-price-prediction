@@ -1,5 +1,6 @@
 import Link from "next/link";
 import PriceTicker from "@/components/PriceTicker";
+import BrowserForecast from "@/components/BrowserForecast";
 
 export default function Page() {
   return (
@@ -27,7 +28,11 @@ export default function Page() {
 
         <PriceTicker />
 
-        <p className="footer">Landing page with a live BTC/USD price ticker.</p>
+        <BrowserForecast />
+
+        <p className="footer">
+          All forecasts are computed client-side from live BTC data (CoinGecko).
+        </p>
       </div>
     </main>
   );
