@@ -11,7 +11,7 @@ export default function Page() {
           <div>
             <div className="title">BTC-USD Price Prediction</div>
             <p className="subtitle">
-              A clean landing page and live BTC price ticker. Built with Next.js.
+              built by vir sanghavi
             </p>
           </div>
 
