@@ -9,7 +9,7 @@ type Forecast = {
   risk?: Record<string, number>;
   regime?: string;
   blended?: Record<string, number>;
-  monte_carlo?: Record<string, number> | Record<number, number>;
+  monte_carlo?: { [key: string]: number; [key: number]: number };
   exit_signal?: { signal: boolean; score: number; explanation: string };
   error?: string;
 };
@@ -61,7 +61,7 @@ export default function ForecastButton() {
           </div>
           {data.monte_carlo && (
             <div style={{ color: "#9ca3af", fontSize: 13 }}>
-              Prob. hit $99k (1d/7d/30d): {pct(data.monte_carlo[1 as any])} / {pct(data.monte_carlo[7 as any])} / {pct(data.monte_carlo[30 as any])}
+              Prob. hit $99k (1d/7d/30d): {pct(data.monte_carlo[1])} / {pct(data.monte_carlo[7])} / {pct(data.monte_carlo[30])}
             </div>
           )}
           {data.exit_signal && (

@@ -1,3 +1,4 @@
+"use client";
 import Link from "next/link";
 import PriceTicker from "@/components/PriceTicker";
 import BrowserForecast from "@/components/BrowserForecast";
