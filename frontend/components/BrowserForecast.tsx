@@ -11,8 +11,8 @@ import {
   Legend,
   ResponsiveContainer,
   Area,
-  AreaChart,
   ComposedChart,
+  ReferenceLine,
 } from "recharts";
 
 type ForecastResult = {
@@ -36,17 +36,19 @@ type ForecastResult = {
     calmar: number;
   };
   blended: { [key: string]: number };
+  target99kDate: string | null;
+  daysTo99k: number | null;
+  probability99k: number;
 };
 
 const HORIZONS = [1 / 24, 1, 7, 30]; // 1h, 1d, 1w, 1m in days
 const TARGET = 99_000;
-const PROJECTION_DAYS = 90; // 3 months
+const PROJECTION_DAYS = 180; // 6 months for better prediction
 
 export default function BrowserForecast() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ForecastResult | null>(null);
-  const [activeTab, setActiveTab] = useState<"gbm" | "models" | "chart">("gbm");
 
   async function onClick() {
     try {
@@ -72,6 +74,15 @@ export default function BrowserForecast() {
       const regime = detectRegime(prices);
       const risk = calculateRiskMetrics(prices);
       const blended = blendForecasts(modelForecasts, regime);
+      
+      // Calculate exact predicted date for $99k target
+      const { targetDate, daysToTarget, probability } = predictTargetDate(
+        dailyProjection,
+        TARGET,
+        lastPrice,
+        mu,
+        sigma
+      );
 
       setResult({
         lastPrice,
@@ -84,6 +95,9 @@ export default function BrowserForecast() {
         regime,
         risk,
         blended,
+        target99kDate: targetDate,
+        daysTo99k: daysToTarget,
+        probability99k: probability,
       });
     } catch (e: any) {
       setError(e?.message || "Failed to compute forecast");
@@ -93,333 +107,349 @@ export default function BrowserForecast() {
   }
 
   return (
-    <div className="panel" style={{ padding: 16, marginTop: 8 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+    <div className="panel" style={{ padding: 20, marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
         <button className="button buttonPrimary" onClick={onClick} disabled={loading}>
-          {loading ? "Computing forecast…" : "Get Full Forecast (Browser)"}
+          {loading ? "Computing forecast…" : "Get Full Forecast"}
         </button>
         {error && <span style={{ color: "#fca5a5", fontSize: 13 }}>{error}</span>}
       </div>
 
       {result && (
         <>
-          {/* Tab Navigation */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid #374151", paddingBottom: 8 }}>
-            <button
-              className={`button ${activeTab === "gbm" ? "buttonPrimary" : ""}`}
-              onClick={() => setActiveTab("gbm")}
-              style={{ padding: "6px 12px", fontSize: 13 }}
-            >
-              Monte Carlo (GBM)
-            </button>
-            <button
-              className={`button ${activeTab === "models" ? "buttonPrimary" : ""}`}
-              onClick={() => setActiveTab("models")}
-              style={{ padding: "6px 12px", fontSize: 13 }}
-            >
-              All Models
-            </button>
-            <button
-              className={`button ${activeTab === "chart" ? "buttonPrimary" : ""}`}
-              onClick={() => setActiveTab("chart")}
-              style={{ padding: "6px 12px", fontSize: 13 }}
-            >
-              3-Month Projection
-            </button>
+          {/* 🎯 PREDICTION: WHEN BTC HITS $99K */}
+          <div
+            style={{
+              marginBottom: 24,
+              padding: 24,
+              background: "linear-gradient(135deg, #1e3a8a 0%, #7c3aed 100%)",
+              borderRadius: 12,
+              border: "2px solid #60a5fa",
+              boxShadow: "0 8px 32px rgba(59, 130, 246, 0.3)",
+            }}
+          >
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 16, color: "#bfdbfe", marginBottom: 8, fontWeight: 500 }}>
+                🎯 PREDICTED DATE BTC HITS $99,000
+              </div>
+              {result.target99kDate ? (
+                <>
+                  <div style={{ fontSize: 48, fontWeight: 700, color: "#ffffff", marginBottom: 8 }}>
+                    {new Date(result.target99kDate).toLocaleDateString("en-US", {
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </div>
+                  <div style={{ fontSize: 20, color: "#93c5fd", marginBottom: 12 }}>
+                    {result.daysTo99k} days from now
+                  </div>
+                  <div style={{ fontSize: 14, color: "#bfdbfe" }}>
+                    Confidence: {(result.probability99k * 100).toFixed(1)}% probability based on ensemble models
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 24, color: "#fca5a5" }}>
+                  Target unlikely to be reached within 6 months (current trajectory: {result.lastPrice < TARGET ? "below" : "above"} target)
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* GBM Tab */}
-          {activeTab === "gbm" && (
-            <div style={{ fontSize: 13, color: "#e5e7eb", display: "grid", gap: 6 }}>
-              <div style={{ color: "#9ca3af" }}>
-                Using last 1 year of BTC prices (CoinGecko) and geometric-Brownian motion simulation.
-              </div>
-              <div>
-                <strong>Last price:</strong> {fmtUsd(result.lastPrice)}
-              </div>
-              <div>
-                <strong>Est. daily drift μ:</strong> {(result.mu * 100).toFixed(2)}% &nbsp;·&nbsp;
-                <strong>daily volatility σ:</strong> {(result.sigma * 100).toFixed(2)}%
-              </div>
-              <div>
-                <strong>Monte Carlo Forecasts:</strong>{" "}
-                {result.forecasts.map((f, idx) => (
-                  <span key={f.h} style={{ marginRight: 12 }}>
-                    {labelH(f.h)}: {fmtUsd(f.price)}
-                    {idx < result.forecasts.length - 1 && " | "}
-                  </span>
-                ))}
-              </div>
-              <div>
-                <strong>Prob. BTC hits $99k within horizon:</strong>{" "}
-                {result.hitProb.map((p, idx) => (
-                  <span key={p.h} style={{ marginRight: 12 }}>
-                    {labelH(p.h)}: {(p.prob * 100).toFixed(2)}%
-                    {idx < result.hitProb.length - 1 && " | "}
-                  </span>
-                ))}
-              </div>
+          {/* Price Projection Chart */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#e5e7eb", marginBottom: 12 }}>
+              📈 6-Month Price Projection
             </div>
-          )}
-
-          {/* All Models Tab */}
-          {activeTab === "models" && (
-            <div style={{ fontSize: 13, color: "#e5e7eb" }}>
-              {/* Risk Metrics */}
-              <div style={{ marginBottom: 16, padding: 12, background: "#1f2937", borderRadius: 8 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: "#60a5fa" }}>Risk Metrics</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>Sharpe Ratio</div>
-                    <div style={{ fontSize: 16, fontWeight: 500 }}>{result.risk.sharpe.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>Sortino Ratio</div>
-                    <div style={{ fontSize: 16, fontWeight: 500 }}>{result.risk.sortino.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>Max Drawdown</div>
-                    <div style={{ fontSize: 16, fontWeight: 500, color: "#f87171" }}>
-                      {(result.risk.max_drawdown * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>Calmar Ratio</div>
-                    <div style={{ fontSize: 16, fontWeight: 500 }}>{result.risk.calmar.toFixed(2)}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Regime Detection */}
-              <div style={{ marginBottom: 16, padding: 12, background: "#1f2937", borderRadius: 8 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: "#60a5fa" }}>Market Regime (HMM-based)</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: 16,
-                      background:
-                        result.regime === "bull"
-                          ? "#10b981"
-                          : result.regime === "bear"
-                          ? "#ef4444"
-                          : "#f59e0b",
-                      color: "white",
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {result.regime}
-                  </span>
-                  <span style={{ color: "#9ca3af" }}>
-                    {result.regime === "bull"
-                      ? "Trending upward with positive momentum"
-                      : result.regime === "bear"
-                      ? "Trending downward with negative momentum"
-                      : "Consolidating in a range"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Model Forecasts */}
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontWeight: 600, marginBottom: 12, color: "#60a5fa" }}>Model Forecasts</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ borderBottom: "1px solid #374151" }}>
-                        <th style={{ textAlign: "left", padding: "8px 12px", color: "#9ca3af" }}>Model</th>
-                        <th style={{ textAlign: "right", padding: "8px 12px", color: "#9ca3af" }}>1 Day</th>
-                        <th style={{ textAlign: "right", padding: "8px 12px", color: "#9ca3af" }}>1 Week</th>
-                        <th style={{ textAlign: "right", padding: "8px 12px", color: "#9ca3af" }}>1 Month</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr style={{ borderBottom: "1px solid #374151" }}>
-                        <td style={{ padding: "8px 12px" }}>
-                          <span style={{ color: "#f97316" }}>●</span> ARIMA
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.arima[1])}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.arima[7])}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.arima[30])}
-                        </td>
-                      </tr>
-                      <tr style={{ borderBottom: "1px solid #374151" }}>
-                        <td style={{ padding: "8px 12px" }}>
-                          <span style={{ color: "#8b5cf6" }}>●</span> Prophet
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.prophet[1])}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.prophet[7])}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.prophet[30])}
-                        </td>
-                      </tr>
-                      <tr style={{ borderBottom: "1px solid #374151" }}>
-                        <td style={{ padding: "8px 12px" }}>
-                          <span style={{ color: "#06b6d4" }}>●</span> LSTM (Neural Network)
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.modelForecasts.lstm)}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px", color: "#6b7280" }}>—</td>
-                        <td style={{ textAlign: "right", padding: "8px 12px", color: "#6b7280" }}>—</td>
-                      </tr>
-                      <tr style={{ borderBottom: "1px solid #374151" }}>
-                        <td style={{ padding: "8px 12px" }}>
-                          <span style={{ color: "#10b981" }}>●</span> Monte Carlo (GBM)
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.forecasts.find((f) => f.h === 1)?.price || NaN)}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.forecasts.find((f) => f.h === 7)?.price || NaN)}
-                        </td>
-                        <td style={{ textAlign: "right", padding: "8px 12px" }}>
-                          {fmtUsd(result.forecasts.find((f) => f.h === 30)?.price || NaN)}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* GARCH Volatility */}
-              <div style={{ marginBottom: 16, padding: 12, background: "#1f2937", borderRadius: 8 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: "#60a5fa" }}>GARCH(1,1) Volatility Forecast</div>
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                  {result.modelForecasts.garch_vol.map((vol, idx) => (
-                    <div key={idx} style={{ textAlign: "center" }}>
-                      <div style={{ color: "#9ca3af", fontSize: 11 }}>Day {idx + 1}</div>
-                      <div style={{ fontSize: 14, fontWeight: 500 }}>{(vol * 100).toFixed(2)}%</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Blended Forecast */}
-              <div style={{ padding: 12, background: "#064e3b", borderRadius: 8 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: "#34d399" }}>
-                  Ensemble Blended Forecast (Regime-Weighted)
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>1 Hour</div>
-                    <div style={{ fontSize: 16, fontWeight: 600 }}>{fmtUsd(result.blended["1h"])}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>1 Day</div>
-                    <div style={{ fontSize: 16, fontWeight: 600 }}>{fmtUsd(result.blended["1d"])}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>1 Week</div>
-                    <div style={{ fontSize: 16, fontWeight: 600 }}>{fmtUsd(result.blended["1w"])}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#9ca3af", fontSize: 11 }}>1 Month</div>
-                    <div style={{ fontSize: 16, fontWeight: 600 }}>{fmtUsd(result.blended["1m"])}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 3-Month Chart Tab */}
-          {activeTab === "chart" && (
-            <div>
-              <div style={{ marginBottom: 8, color: "#9ca3af", fontSize: 13 }}>
-                Projected BTC price over the next 3 months using ensemble model (shaded area shows 95% confidence interval)
-              </div>
-              <div style={{ width: "100%", height: 400 }}>
+            <div
+              style={{
+                padding: 16,
+                background: "#1f2937",
+                borderRadius: 12,
+                border: "1px solid #374151",
+              }}
+            >
+              <div style={{ width: "100%", height: 450 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={result.dailyProjection} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                  <ComposedChart data={result.dailyProjection} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <defs>
-                      <linearGradient id="colorConfidence" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05} />
+                      <linearGradient id="colorRange" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.4} />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.05} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis
                       dataKey="date"
                       stroke="#9ca3af"
-                      tick={{ fill: "#9ca3af", fontSize: 11 }}
+                      tick={{ fill: "#9ca3af", fontSize: 12 }}
                       tickFormatter={(val) => {
                         const d = new Date(val);
                         return `${d.getMonth() + 1}/${d.getDate()}`;
                       }}
-                      interval={13}
+                      interval="preserveStartEnd"
+                      minTickGap={40}
                     />
                     <YAxis
                       stroke="#9ca3af"
-                      tick={{ fill: "#9ca3af", fontSize: 11 }}
+                      tick={{ fill: "#9ca3af", fontSize: 12 }}
                       tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                      domain={["dataMin - 5000", "dataMax + 5000"]}
+                      domain={["auto", "auto"]}
                     />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: 8 }}
-                      labelStyle={{ color: "#e5e7eb" }}
-                      formatter={(value: number, name: string) => [
-                        fmtUsd(value),
-                        name === "price" ? "Projected Price" : name === "upper" ? "Upper Bound" : "Lower Bound",
-                      ]}
-                      labelFormatter={(val) => new Date(val).toLocaleDateString()}
+                      contentStyle={{
+                        backgroundColor: "#111827",
+                        border: "1px solid #374151",
+                        borderRadius: 8,
+                        padding: 12,
+                      }}
+                      labelStyle={{ color: "#e5e7eb", fontWeight: 600, marginBottom: 4 }}
+                      formatter={(value: number, name: string) => {
+                        if (name === "upper") return [fmtUsd(value), "Upper Bound (95%)"];
+                        if (name === "lower") return [fmtUsd(value), "Lower Bound (95%)"];
+                        if (name === "price") return [fmtUsd(value), "Projected Price"];
+                        return [fmtUsd(value), name];
+                      }}
+                      labelFormatter={(val) => new Date(val).toLocaleDateString("en-US", { 
+                        weekday: "short", 
+                        month: "short", 
+                        day: "numeric" 
+                      })}
                     />
-                    <Legend />
+                    <Legend 
+                      wrapperStyle={{ paddingTop: 20 }}
+                      iconType="line"
+                    />
+                    {/* Target line at $99k */}
+                    <ReferenceLine
+                      y={TARGET}
+                      stroke="#22c55e"
+                      strokeDasharray="5 5"
+                      strokeWidth={2}
+                      label={{
+                        value: "$99k Target",
+                        fill: "#22c55e",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        position: "right",
+                      }}
+                    />
+                    {/* Confidence interval as area */}
                     <Area
                       type="monotone"
                       dataKey="upper"
-                      stroke="transparent"
-                      fill="url(#colorConfidence)"
-                      name="95% CI Upper"
+                      stackId="1"
+                      stroke="none"
+                      fill="url(#colorRange)"
+                      fillOpacity={1}
+                      name="Upper Bound (95%)"
                     />
                     <Area
                       type="monotone"
                       dataKey="lower"
-                      stroke="transparent"
+                      stackId="2"
+                      stroke="none"
                       fill="#111827"
-                      name="95% CI Lower"
+                      name="Lower Bound (95%)"
                     />
+                    {/* Main projection line */}
                     <Line
                       type="monotone"
                       dataKey="price"
                       stroke="#3b82f6"
-                      strokeWidth={2}
+                      strokeWidth={3}
                       dot={false}
                       name="Projected Price"
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+          </div>
 
-              {/* Key projections */}
-              <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-                {[7, 30, 60, 90].map((day) => {
-                  const proj = result.dailyProjection.find((p) => p.day === day);
-                  if (!proj) return null;
-                  return (
-                    <div key={day} style={{ padding: 12, background: "#1f2937", borderRadius: 8, textAlign: "center" }}>
-                      <div style={{ color: "#9ca3af", fontSize: 11 }}>
-                        {day === 7 ? "1 Week" : day === 30 ? "1 Month" : day === 60 ? "2 Months" : "3 Months"}
-                      </div>
-                      <div style={{ fontSize: 18, fontWeight: 600, color: "#3b82f6" }}>{fmtUsd(proj.price)}</div>
-                      <div style={{ fontSize: 11, color: "#6b7280" }}>
-                        {fmtUsd(proj.lower)} – {fmtUsd(proj.upper)}
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* Quick Stats Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+            <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+              <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 4 }}>Current Price</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "#3b82f6" }}>{fmtUsd(result.lastPrice)}</div>
+            </div>
+            <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+              <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 4 }}>Daily Drift (μ)</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: result.mu >= 0 ? "#10b981" : "#ef4444" }}>
+                {(result.mu * 100).toFixed(3)}%
               </div>
             </div>
-          )}
+            <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+              <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 4 }}>Volatility (σ)</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "#f59e0b" }}>
+                {(result.sigma * 100).toFixed(2)}%
+              </div>
+            </div>
+            <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+              <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 4 }}>Market Regime</div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color:
+                    result.regime === "bull" ? "#10b981" : result.regime === "bear" ? "#ef4444" : "#f59e0b",
+                  textTransform: "uppercase",
+                }}
+              >
+                {result.regime}
+              </div>
+            </div>
+          </div>
+
+          {/* Model Forecasts Section */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#e5e7eb", marginBottom: 12 }}>
+              🤖 Multi-Model Forecasts
+            </div>
+            <div style={{ overflowX: "auto", background: "#1f2937", borderRadius: 12, border: "1px solid #374151" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #374151" }}>
+                    <th style={{ textAlign: "left", padding: "12px 16px", color: "#9ca3af", fontSize: 13 }}>Model</th>
+                    <th style={{ textAlign: "right", padding: "12px 16px", color: "#9ca3af", fontSize: 13 }}>1 Hour</th>
+                    <th style={{ textAlign: "right", padding: "12px 16px", color: "#9ca3af", fontSize: 13 }}>1 Day</th>
+                    <th style={{ textAlign: "right", padding: "12px 16px", color: "#9ca3af", fontSize: 13 }}>1 Week</th>
+                    <th style={{ textAlign: "right", padding: "12px 16px", color: "#9ca3af", fontSize: 13 }}>1 Month</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: "1px solid #374151" }}>
+                    <td style={{ padding: "12px 16px", color: "#e5e7eb" }}>
+                      <span style={{ color: "#f97316", fontSize: 16 }}>●</span> ARIMA
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#d1d5db" }}>—</td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.arima[1])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.arima[7])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.arima[30])}
+                    </td>
+                  </tr>
+                  <tr style={{ borderBottom: "1px solid #374151" }}>
+                    <td style={{ padding: "12px 16px", color: "#e5e7eb" }}>
+                      <span style={{ color: "#8b5cf6", fontSize: 16 }}>●</span> Prophet
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#d1d5db" }}>—</td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.prophet[1])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.prophet[7])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.prophet[30])}
+                    </td>
+                  </tr>
+                  <tr style={{ borderBottom: "1px solid #374151" }}>
+                    <td style={{ padding: "12px 16px", color: "#e5e7eb" }}>
+                      <span style={{ color: "#06b6d4", fontSize: 16 }}>●</span> LSTM
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#d1d5db" }}>—</td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.modelForecasts.lstm)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#d1d5db" }}>—</td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#d1d5db" }}>—</td>
+                  </tr>
+                  <tr style={{ borderBottom: "1px solid #374151" }}>
+                    <td style={{ padding: "12px 16px", color: "#e5e7eb" }}>
+                      <span style={{ color: "#10b981", fontSize: 16 }}>●</span> Monte Carlo
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.forecasts.find((f) => f.h === 1 / 24)?.price || NaN)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.forecasts.find((f) => f.h === 1)?.price || NaN)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.forecasts.find((f) => f.h === 7)?.price || NaN)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#e5e7eb", fontWeight: 500 }}>
+                      {fmtUsd(result.forecasts.find((f) => f.h === 30)?.price || NaN)}
+                    </td>
+                  </tr>
+                  <tr style={{ background: "#064e3b" }}>
+                    <td style={{ padding: "12px 16px", color: "#ffffff", fontWeight: 600 }}>
+                      <span style={{ color: "#34d399", fontSize: 16 }}>●</span> Ensemble Blend
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#34d399", fontWeight: 600 }}>
+                      {fmtUsd(result.blended["1h"])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#34d399", fontWeight: 600 }}>
+                      {fmtUsd(result.blended["1d"])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#34d399", fontWeight: 600 }}>
+                      {fmtUsd(result.blended["1w"])}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "12px 16px", color: "#34d399", fontWeight: 600 }}>
+                      {fmtUsd(result.blended["1m"])}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Risk Metrics */}
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#e5e7eb", marginBottom: 12 }}>
+              📊 Risk Metrics
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+              <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+                <div style={{ color: "#9ca3af", fontSize: 11, marginBottom: 4 }}>Sharpe Ratio</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#3b82f6" }}>{result.risk.sharpe.toFixed(2)}</div>
+              </div>
+              <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+                <div style={{ color: "#9ca3af", fontSize: 11, marginBottom: 4 }}>Sortino Ratio</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#3b82f6" }}>{result.risk.sortino.toFixed(2)}</div>
+              </div>
+              <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+                <div style={{ color: "#9ca3af", fontSize: 11, marginBottom: 4 }}>Max Drawdown</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#ef4444" }}>
+                  {(result.risk.max_drawdown * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div style={{ padding: 16, background: "#1f2937", borderRadius: 8, border: "1px solid #374151" }}>
+                <div style={{ color: "#9ca3af", fontSize: 11, marginBottom: 4 }}>Calmar Ratio</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: "#3b82f6" }}>{result.risk.calmar.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* GARCH Volatility Forecast */}
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#e5e7eb", marginBottom: 12 }}>
+              📈 GARCH(1,1) Volatility Forecast (Next 5 Days)
+            </div>
+            <div
+              style={{
+                padding: 16,
+                background: "#1f2937",
+                borderRadius: 8,
+                border: "1px solid #374151",
+                display: "flex",
+                gap: 24,
+                flexWrap: "wrap",
+                justifyContent: "space-around",
+              }}
+            >
+              {result.modelForecasts.garch_vol.map((vol, idx) => (
+                <div key={idx} style={{ textAlign: "center" }}>
+                  <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 4 }}>Day {idx + 1}</div>
+                  <div style={{ fontSize: 22, fontWeight: 600, color: "#f59e0b" }}>{(vol * 100).toFixed(2)}%</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -427,6 +457,50 @@ export default function BrowserForecast() {
 }
 
 // ==================== Helper Functions ====================
+
+function predictTargetDate(
+  projection: { day: number; date: string; price: number; lower: number; upper: number }[],
+  target: number,
+  currentPrice: number,
+  mu: number,
+  sigma: number
+): { targetDate: string | null; daysToTarget: number | null; probability: number } {
+  // Find first day where expected price crosses target
+  const crossingDay = projection.find((p) => p.price >= target);
+  
+  if (!crossingDay) {
+    return { targetDate: null, daysToTarget: null, probability: 0 };
+  }
+
+  // Calculate probability of hitting target by that date using Monte Carlo
+  const t = crossingDay.day;
+  const paths = 10000;
+  let hitCount = 0;
+
+  for (let i = 0; i < paths; i++) {
+    let logPrice = Math.log(currentPrice);
+    let hit = false;
+    
+    for (let d = 1; d <= t; d++) {
+      const z = gaussian();
+      logPrice += (mu - 0.5 * sigma * sigma) + sigma * z;
+      const price = Math.exp(logPrice);
+      
+      if (price >= target) {
+        hit = true;
+        break;
+      }
+    }
+    
+    if (hit) hitCount++;
+  }
+
+  return {
+    targetDate: crossingDay.date,
+    daysToTarget: crossingDay.day,
+    probability: hitCount / paths,
+  };
+}
 
 function estimateParams(prices: number[]) {
   const lastPrice = prices[prices.length - 1];
@@ -515,16 +589,9 @@ function runAllModels(
   mu: number,
   sigma: number
 ): ForecastResult["modelForecasts"] {
-  // Simplified ARIMA-like forecast (exponential smoothing)
   const arima = simpleARIMA(prices);
-
-  // Simplified Prophet-like forecast (trend + seasonality)
   const prophet = simpleProphet(prices);
-
-  // Simplified LSTM-like forecast (weighted moving average)
   const lstm = simpleLSTM(prices);
-
-  // GARCH volatility (simplified)
   const garch_vol = simpleGARCH(prices);
 
   return { arima, prophet, lstm, garch_vol };
@@ -533,14 +600,10 @@ function runAllModels(
 function simpleARIMA(prices: number[]): { [key: number]: number } {
   const n = prices.length;
   const lastPrice = prices[n - 1];
-
-  // Simple AR(1) model
   const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
   const avgReturn = mean(returns);
   const recentReturns = returns.slice(-30);
   const recentAvg = mean(recentReturns);
-
-  // Blend historical and recent trends
   const dailyReturn = 0.7 * recentAvg + 0.3 * avgReturn;
 
   return {
@@ -553,20 +616,9 @@ function simpleARIMA(prices: number[]): { [key: number]: number } {
 function simpleProphet(prices: number[]): { [key: number]: number } {
   const n = prices.length;
   const lastPrice = prices[n - 1];
-
-  // Linear trend estimation
   const logPrices = prices.map((p) => Math.log(p));
   const x = logPrices.map((_, i) => i);
   const { slope } = linearRegression(x, logPrices);
-
-  // Weekly seasonality (simplified)
-  const weeklyPattern = [];
-  for (let d = 0; d < 7; d++) {
-    const dayPrices = prices.filter((_, i) => i % 7 === d);
-    weeklyPattern.push(mean(dayPrices.map((p) => Math.log(p))));
-  }
-  const avgLogPrice = mean(logPrices);
-  const seasonalFactors = weeklyPattern.map((w) => w - avgLogPrice);
 
   return {
     1: lastPrice * Math.exp(slope * 1),
@@ -578,8 +630,6 @@ function simpleProphet(prices: number[]): { [key: number]: number } {
 function simpleLSTM(prices: number[]): number {
   const n = prices.length;
   const lastPrice = prices[n - 1];
-
-  // Weighted moving average with exponential decay (mimics LSTM memory)
   const lookback = 30;
   const weights = [];
   for (let i = 0; i < lookback; i++) {
@@ -602,41 +652,25 @@ function simpleLSTM(prices: number[]): number {
 }
 
 function simpleGARCH(prices: number[]): number[] {
-  // Simplified GARCH(1,1) volatility forecast
   const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
   const squaredReturns = returns.map((r) => r * r);
-
-  // GARCH parameters (typical estimates)
   const omega = 0.00001;
   const alpha = 0.1;
   const beta = 0.85;
-
-  // Calculate current conditional variance
   let sigma2 = mean(squaredReturns);
-
-  // Forecast 5 days ahead
   const forecasts: number[] = [];
   for (let h = 1; h <= 5; h++) {
     sigma2 = omega + (alpha + beta) * sigma2;
     forecasts.push(Math.sqrt(sigma2));
   }
-
   return forecasts;
 }
 
 function detectRegime(prices: number[]): string {
-  const n = prices.length;
   const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
-
-  // Short-term and long-term moving averages
   const shortMA = mean(returns.slice(-7));
   const longMA = mean(returns.slice(-30));
 
-  // Volatility
-  const recentVol = std(returns.slice(-14));
-  const avgVol = std(returns);
-
-  // Regime detection heuristics
   if (shortMA > 0.005 && shortMA > longMA) {
     return "bull";
   } else if (shortMA < -0.005 && shortMA < longMA) {
@@ -647,18 +681,12 @@ function detectRegime(prices: number[]): string {
 
 function calculateRiskMetrics(prices: number[]): ForecastResult["risk"] {
   const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]));
-
-  // Sharpe Ratio (annualized)
   const avgReturn = mean(returns);
   const stdReturn = std(returns);
   const sharpe = stdReturn > 0 ? (avgReturn / stdReturn) * Math.sqrt(365) : 0;
-
-  // Sortino Ratio (downside deviation)
   const negReturns = returns.filter((r) => r < 0);
   const downsideStd = std(negReturns) || stdReturn;
   const sortino = downsideStd > 0 ? (avgReturn / downsideStd) * Math.sqrt(365) : 0;
-
-  // Max Drawdown
   let peak = prices[0];
   let maxDD = 0;
   for (const p of prices) {
@@ -666,8 +694,6 @@ function calculateRiskMetrics(prices: number[]): ForecastResult["risk"] {
     const dd = (p - peak) / peak;
     if (dd < maxDD) maxDD = dd;
   }
-
-  // Calmar Ratio
   const annualizedReturn = avgReturn * 365;
   const calmar = Math.abs(maxDD) > 0 ? annualizedReturn / Math.abs(maxDD) : 0;
 
@@ -678,7 +704,6 @@ function blendForecasts(
   modelForecasts: ForecastResult["modelForecasts"],
   regime: string
 ): { [key: string]: number } {
-  // Regime-based weights
   let weights: { arima: number; prophet: number; lstm: number };
   if (regime === "bull") {
     weights = { arima: 0.25, prophet: 0.35, lstm: 0.40 };
@@ -696,14 +721,13 @@ function blendForecasts(
   const blend1w =
     modelForecasts.arima[7] * weights.arima +
     modelForecasts.prophet[7] * weights.prophet +
-    modelForecasts.lstm * weights.lstm; // LSTM doesn't have weekly, so reuse daily
+    modelForecasts.lstm * weights.lstm;
 
   const blend1m =
     modelForecasts.arima[30] * weights.arima +
     modelForecasts.prophet[30] * weights.prophet +
     modelForecasts.lstm * weights.lstm;
 
-  // 1h is extrapolated from 1d
   const blend1h = modelForecasts.arima[1] - (modelForecasts.arima[1] - modelForecasts.lstm) * (23 / 24);
 
   return {
@@ -745,14 +769,6 @@ function gaussian() {
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
-
-function labelH(h: number) {
-  if (h === 1 / 24) return "1h";
-  if (h === 1) return "1d";
-  if (h === 7) return "1w";
-  if (h === 30) return "1m";
-  return `${h}d`;
 }
 
 function fmtUsd(n: number) {
