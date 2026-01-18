@@ -11,7 +11,7 @@ export default function Page() {
           <div>
             <div className="title">BTC-USD Price Prediction</div>
             <p className="subtitle">
-              built by vir sanghavi
+              built by vir sanghavi in 2026
             </p>
           </div>
 
